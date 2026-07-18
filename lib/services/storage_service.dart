@@ -4,7 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/credential.dart';
 import 'encryption_service.dart';
 
-/// Local SQLite store.  Every row's payload is AES-encrypted before write.
+/// Local SQLite store. Every row's payload is AES-encrypted before write.
 class StorageService {
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
@@ -13,7 +13,7 @@ class StorageService {
   Database? _db;
   final _enc = EncryptionService();
 
-  // ── Lifecycle ────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────
 
   Future<void> init() async {
     final dbPath = await getDatabasesPath();
@@ -39,11 +39,11 @@ class StorageService {
     );
   }
 
-  // ── Read ─────────────────────────────────────────────────────
+  // ── Read ──────────────────────────────────────────────────────
 
   Future<List<Credential>> getAll({bool includeDeleted = false}) async {
     final rows = await _db!.query('credentials');
-    final out = <Credential>[];
+    final out  = <Credential>[];
     for (final row in rows) {
       if (!includeDeleted && row['isDeleted'] == 1) continue;
       final c = _decode(row['data'] as String);
@@ -64,7 +64,7 @@ class StorageService {
 
   Future<List<Credential>> getRecent() async {
     final rows = await _db!.query('recent', orderBy: 'accessedAt DESC', limit: 5);
-    final out = <Credential>[];
+    final out  = <Credential>[];
     for (final r in rows) {
       final cRows = await _db!.query(
         'credentials',
@@ -79,23 +79,22 @@ class StorageService {
     return out;
   }
 
-  // ── Write ────────────────────────────────────────────────────
+  // ── Write ─────────────────────────────────────────────────────
 
   Future<void> save(Credential credential) async {
     final encrypted = _enc.encrypt(jsonEncode(credential.toJson()));
     await _db!.insert(
       'credentials',
       {
-        'id': credential.id,
-        'data': encrypted,
+        'id':         credential.id,
+        'data':       encrypted,
         'modifiedAt': credential.modifiedAt.toIso8601String(),
-        'isDeleted': credential.isDeleted ? 1 : 0,
+        'isDeleted':  credential.isDeleted ? 1 : 0,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// Soft-delete: marks row as deleted so it can be synced to other devices.
   Future<void> softDelete(String id) async {
     final rows = await _db!.query('credentials', where: 'id = ?', whereArgs: [id]);
     if (rows.isEmpty) return;
@@ -112,32 +111,46 @@ class StorageService {
     );
   }
 
-  // ── Sync helpers ─────────────────────────────────────────────
+  // ── Sync merge ────────────────────────────────────────────────
 
-  /// Last-write-wins merge: keep whichever version has the latest modifiedAt.
   Future<void> mergeFromRemote(List<Credential> remote) async {
+    print('DEBUG: mergeFromRemote called with ${remote.length} credentials');
     for (final r in remote) {
+      print('DEBUG: Processing credential: ${r.website} (id: ${r.id}, isDeleted: ${r.isDeleted})');
       final existing =
           await _db!.query('credentials', where: 'id = ?', whereArgs: [r.id]);
       if (existing.isEmpty) {
+        print('DEBUG: New credential, saving: ${r.website}');
         await save(r);
       } else {
         final localTime = DateTime.parse(existing.first['modifiedAt'] as String);
-        if (r.modifiedAt.isAfter(localTime)) await save(r);
+        final localDeleted = existing.first['isDeleted'] == 1;
+        print('DEBUG: Local modifiedAt: $localTime, isDeleted: $localDeleted');
+        print('DEBUG: Remote modifiedAt: ${r.modifiedAt}, isDeleted: ${r.isDeleted}');
+        
+        // Always update if remote is newer OR if local is deleted but remote isn't
+        if (r.modifiedAt.isAfter(localTime) || (localDeleted && !r.isDeleted)) {
+          print('DEBUG: Updating: ${r.website}');
+          await save(r);
+        } else {
+          print('DEBUG: Local is newer or same, skipping: ${r.website}');
+        }
       }
     }
+    print('DEBUG: mergeFromRemote complete');
   }
 
-  // ── Export ───────────────────────────────────────────────────
+  // ── Export / Import ───────────────────────────────────────────
 
   Future<String> exportCsv() async {
     final all = await getAll();
-    final sb = StringBuffer();
-    sb.writeln('Website,Email/Username,Password,URL,API Key,Created,Modified');
+    final sb  = StringBuffer();
+    sb.writeln('Website,Email/Username,Password,URL,API Keys,Notes,Created,Modified');
     for (final c in all) {
       sb.writeln(
         '"${_csv(c.website)}","${_csv(c.email)}","${_csv(c.password)}",'
-        '"${_csv(c.url)}","${_csv(c.apiKey)}","${c.createdAt}","${c.modifiedAt}"',
+        '"${_csv(c.url)}","${_csv(c.apiKeys.join(' | '))}","${_csv(c.notes)}",'
+        '"${c.createdAt}","${c.modifiedAt}"',
       );
     }
     return sb.toString();
@@ -148,18 +161,22 @@ class StorageService {
     return jsonEncode(all.map((c) => c.toJson()).toList());
   }
 
-  Future<void> importJson(String json) async {
+  Future<int> importJson(String json) async {
     final list = jsonDecode(json) as List;
+    int count = 0;
     for (final item in list) {
       await save(Credential.fromJson(item as Map<String, dynamic>));
+      count++;
     }
+    return count;
   }
 
-  // ── Private ──────────────────────────────────────────────────
+  // ── Private ───────────────────────────────────────────────────
 
   Credential? _decode(String encrypted) {
     try {
-      return Credential.fromJson(jsonDecode(_enc.decrypt(encrypted)) as Map<String, dynamic>);
+      return Credential.fromJson(
+          jsonDecode(_enc.decrypt(encrypted)) as Map<String, dynamic>);
     } catch (_) {
       return null;
     }

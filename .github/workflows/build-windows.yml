@@ -19,6 +19,10 @@ jobs:
           
       - name: Install dependencies
         run: flutter pub get
+      
+      - name: Setup SQLite for Windows
+        run: |
+          flutter pub run sqflite_common_ffi:setup_ffi_windows
         
       - name: Build Windows
         run: flutter build windows --release

@@ -7,7 +7,6 @@ import '../theme/app_theme.dart';
 
 class CredentialFormScreen extends StatefulWidget {
   final Credential? credential;
-
   const CredentialFormScreen({super.key, this.credential});
 
   @override
@@ -17,21 +16,23 @@ class CredentialFormScreen extends StatefulWidget {
 class _CredentialFormScreenState extends State<CredentialFormScreen> {
   final _storage = StorageService();
 
-  final _websiteCtrl  = TextEditingController();
-  final _urlCtrl      = TextEditingController();
-  final _emailCtrl    = TextEditingController();
-  final _pwCtrl       = TextEditingController();
-  final _apiKeyCtrl   = TextEditingController();
+  final _websiteCtrl = TextEditingController();
+  final _urlCtrl     = TextEditingController();
+  final _emailCtrl   = TextEditingController();
+  final _pwCtrl      = TextEditingController();
+  final _notesCtrl   = TextEditingController();
 
-  bool   _showPw     = false;
-  bool   _showApi    = false;
-  bool   _busy       = false;
-  String _strength   = '';
+  // Multiple API keys — list of controllers
+  final List<TextEditingController> _apiKeyCtrls = [];
+
+  bool   _showPw   = false;
+  bool   _busy     = false;
+  String _strength = '';
   Color  _strengthClr = Colors.transparent;
 
   bool get _editing => widget.credential != null;
 
-  // ── Lifecycle ─────────────────────────────────────────────────
+  // ── Lifecycle ──────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -39,12 +40,18 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     if (_editing) {
       final c = widget.credential!;
       _websiteCtrl.text = c.website;
-      _urlCtrl.text     = c.url    ?? '';
-      _emailCtrl.text   = c.email  ?? '';
-      _pwCtrl.text      = c.password;
-      _apiKeyCtrl.text  = c.apiKey ?? '';
-      _evalStrength(c.password);
+      _urlCtrl.text     = c.url     ?? '';
+      _emailCtrl.text   = c.email   ?? '';
+      _pwCtrl.text      = c.password ?? '';
+      _notesCtrl.text   = c.notes   ?? '';
+      // Populate API key controllers from saved keys
+      for (final k in c.apiKeys) {
+        _apiKeyCtrls.add(TextEditingController(text: k));
+      }
+      if (_pwCtrl.text.isNotEmpty) _evalStrength(_pwCtrl.text);
     }
+    // Always start with at least one (empty) API key row
+    if (_apiKeyCtrls.isEmpty) _apiKeyCtrls.add(TextEditingController());
     _pwCtrl.addListener(() => _evalStrength(_pwCtrl.text));
   }
 
@@ -54,11 +61,12 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     _urlCtrl.dispose();
     _emailCtrl.dispose();
     _pwCtrl.dispose();
-    _apiKeyCtrl.dispose();
+    _notesCtrl.dispose();
+    for (final c in _apiKeyCtrls) c.dispose();
     super.dispose();
   }
 
-  // ── Password strength ─────────────────────────────────────────
+  // ── Password strength ──────────────────────────────────────────
 
   void _evalStrength(String pw) {
     if (pw.isEmpty) {
@@ -66,12 +74,12 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
       return;
     }
     int score = 0;
-    if (pw.length >= 8)  score++;
-    if (pw.length >= 14) score++;
-    if (RegExp(r'[A-Z]').hasMatch(pw)) score++;
-    if (RegExp(r'[a-z]').hasMatch(pw)) score++;
-    if (RegExp(r'[0-9]').hasMatch(pw)) score++;
-    if (RegExp(r'[^A-Za-z0-9]').hasMatch(pw)) score++;
+    if (pw.length >= 8)                            score++;
+    if (pw.length >= 14)                           score++;
+    if (RegExp(r'[A-Z]').hasMatch(pw))             score++;
+    if (RegExp(r'[a-z]').hasMatch(pw))             score++;
+    if (RegExp(r'[0-9]').hasMatch(pw))             score++;
+    if (RegExp(r'[^A-Za-z0-9]').hasMatch(pw))      score++;
 
     if (score <= 2) {
       setState(() { _strength = 'Weak';   _strengthClr = AppTheme.error; });
@@ -82,7 +90,7 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     }
   }
 
-  // ── Password generator ────────────────────────────────────────
+  // ── Password generator ─────────────────────────────────────────
 
   void _generate() {
     const chars =
@@ -91,23 +99,42 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
         '0123456789'
         r'!@#$%^&*()_+-=[]{}|;:,.<>?';
     final rng = Random.secure();
-    final len = 14 + rng.nextInt(5); // 14–18
+    final len = 14 + rng.nextInt(5);
     final pw  = List.generate(len, (_) => chars[rng.nextInt(chars.length)]).join();
     _pwCtrl.text = pw;
     Clipboard.setData(ClipboardData(text: pw));
     _snack('Password generated & copied to clipboard', AppTheme.success);
   }
 
-  // ── Save / Delete ─────────────────────────────────────────────
+  // ── API key helpers ────────────────────────────────────────────
+
+  void _addApiKeyRow() {
+    setState(() => _apiKeyCtrls.add(TextEditingController()));
+  }
+
+  void _removeApiKeyRow(int index) {
+    setState(() {
+      _apiKeyCtrls[index].dispose();
+      _apiKeyCtrls.removeAt(index);
+    });
+  }
+
+  List<String> _collectApiKeys() => _apiKeyCtrls
+      .map((c) => c.text.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+
+  // ── Save / Delete ──────────────────────────────────────────────
 
   Future<void> _save() async {
     final website = _websiteCtrl.text.trim();
-    final pw      = _pwCtrl.text;
-
     if (website.isEmpty) { _snack('Website name is required', AppTheme.error); return; }
-    if (pw.isEmpty)      { _snack('Password is required',     AppTheme.error); return; }
 
     setState(() => _busy = true);
+
+    final pw     = _pwCtrl.text.isEmpty ? null : _pwCtrl.text;
+    final keys   = _collectApiKeys();
+    final notes  = _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim();
 
     final credential = _editing
         ? widget.credential!.copyWith(
@@ -115,14 +142,16 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
             password: pw,
             url:      _nullIfEmpty(_urlCtrl.text),
             email:    _nullIfEmpty(_emailCtrl.text),
-            apiKey:   _nullIfEmpty(_apiKeyCtrl.text),
+            apiKeys:  keys,
+            notes:    notes,
           )
         : Credential(
             website:  website,
             password: pw,
             url:      _nullIfEmpty(_urlCtrl.text),
             email:    _nullIfEmpty(_emailCtrl.text),
-            apiKey:   _nullIfEmpty(_apiKeyCtrl.text),
+            apiKeys:  keys,
+            notes:    notes,
           );
 
     await _storage.save(credential);
@@ -142,7 +171,7 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     Navigator.of(context).pop(true);
   }
 
-  // ── Helpers ───────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────
 
   String? _nullIfEmpty(String s) => s.trim().isEmpty ? null : s.trim();
 
@@ -165,17 +194,14 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
                 side: const BorderSide(color: AppTheme.border)),
-            title: Text(title,
-                style: const TextStyle(color: AppTheme.textPrimary)),
-            content: Text(body,
-                style: const TextStyle(color: AppTheme.textSecondary)),
+            title:   Text(title, style: const TextStyle(color: AppTheme.textPrimary)),
+            content: Text(body,  style: const TextStyle(color: AppTheme.textSecondary)),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
                   child: const Text('Cancel')),
               ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.error),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
                   onPressed: () => Navigator.pop(ctx, true),
                   child: const Text('Delete')),
             ],
@@ -184,7 +210,7 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
         false;
   }
 
-  // ── Build ─────────────────────────────────────────────────────
+  // ── Build ──────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -209,21 +235,37 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _field('🌐  Website', _websiteCtrl, required: true,
-                    hint: 'GitHub', keyboard: TextInputType.text),
+                // ── Website ──────────────────────────────────────
+                _field('🌐  Website *', _websiteCtrl,
+                    hint: 'GitHub, Gmail, AWS…'),
                 const SizedBox(height: 16),
+
+                // ── URL ──────────────────────────────────────────
                 _field('🔗  URL', _urlCtrl,
                     hint: 'https://github.com',
                     keyboard: TextInputType.url),
                 const SizedBox(height: 16),
+
+                // ── Email ────────────────────────────────────────
                 _field('📧  Email / Username', _emailCtrl,
                     hint: 'you@example.com',
                     keyboard: TextInputType.emailAddress),
                 const SizedBox(height: 16),
+
+                // ── Password (optional) ───────────────────────────
                 _passwordSection(),
                 const SizedBox(height: 16),
-                _apiKeySection(),
+
+                // ── Notes ────────────────────────────────────────
+                _field('📝  Notes', _notesCtrl,
+                    hint: 'Recovery email, account type, plan…'),
+                const SizedBox(height: 16),
+
+                // ── API Keys ──────────────────────────────────────
+                _apiKeysSection(),
                 const SizedBox(height: 32),
+
+                // ── Save ─────────────────────────────────────────
                 ElevatedButton(
                   onPressed: _busy ? null : _save,
                   child: _busy
@@ -242,25 +284,24 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     );
   }
 
-  // ── Form helpers ──────────────────────────────────────────────
+  // ── Form section helpers ───────────────────────────────────────
 
-  Widget _label(String text) {
-    return Text(text,
-        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12));
-  }
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text,
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+      );
 
   Widget _field(
     String label,
     TextEditingController ctrl, {
-    bool required  = false,
     String? hint,
     TextInputType keyboard = TextInputType.text,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label(label + (required ? ' *' : '')),
-        const SizedBox(height: 6),
+        _label(label),
         TextField(
           controller: ctrl,
           keyboardType: keyboard,
@@ -275,7 +316,29 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('🔑  Password *'),
+        Row(
+          children: [
+            _label('🔑  Password'),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.textSecondary.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text('optional',
+                  style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 10,
+                      fontStyle: FontStyle.italic)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        const Text(
+          'Leave blank for SSO / social logins (Google, GitHub, etc.)',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+        ),
         const SizedBox(height: 6),
         Row(
           children: [
@@ -285,6 +348,7 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
                 obscureText: !_showPw,
                 style: const TextStyle(color: AppTheme.textPrimary),
                 decoration: InputDecoration(
+                  hintText: 'Leave empty for SSO logins',
                   suffixIcon: IconButton(
                     icon: Icon(
                       _showPw ? Icons.visibility_off : Icons.visibility,
@@ -312,19 +376,16 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
           Row(
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                 decoration: BoxDecoration(
                   color: _strengthClr.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text(
-                  _strength,
-                  style: TextStyle(
-                      color: _strengthClr,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600),
-                ),
+                child: Text(_strength,
+                    style: TextStyle(
+                        color: _strengthClr,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -349,29 +410,135 @@ class _CredentialFormScreenState extends State<CredentialFormScreen> {
     );
   }
 
-  Widget _apiKeySection() {
+  Widget _apiKeysSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('🔐  API Key (optional)'),
-        const SizedBox(height: 6),
-        TextField(
-          controller: _apiKeyCtrl,
-          obscureText: !_showApi,
-          style: const TextStyle(
-              color: AppTheme.textPrimary, fontFamily: 'monospace', fontSize: 13),
-          decoration: InputDecoration(
-            hintText: 'sk-…',
-            suffixIcon: IconButton(
-              icon: Icon(
-                _showApi ? Icons.visibility_off : Icons.visibility,
-                color: AppTheme.textSecondary, size: 20,
-              ),
-              onPressed: () => setState(() => _showApi = !_showApi),
+        // Header row
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _label('🔐  API Keys'),
+            TextButton.icon(
+              onPressed: _addApiKeyRow,
+              icon: const Icon(Icons.add, size: 16, color: AppTheme.primary),
+              label: const Text('Add Key',
+                  style: TextStyle(color: AppTheme.primary, fontSize: 12)),
+              style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+            ),
+          ],
+        ),
+        const Text(
+          'Add one or more API keys for this service.',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+        ),
+        const SizedBox(height: 8),
+
+        // API key rows
+        ...List.generate(_apiKeyCtrls.length, (i) => _apiKeyRow(i)),
+      ],
+    );
+  }
+
+  Widget _apiKeyRow(int index) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          // Key label badge
+          Container(
+            width: 28,
+            height: 28,
+            margin: const EdgeInsets.only(right: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Center(
+              child: Text('${index + 1}',
+                  style: const TextStyle(
+                      color: AppTheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold)),
             ),
           ),
+          // Text field
+          Expanded(
+            child: _ApiKeyField(controller: _apiKeyCtrls[index]),
+          ),
+          // Remove button (keep at least one row)
+          if (_apiKeyCtrls.length > 1)
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline,
+                  color: AppTheme.error, size: 20),
+              tooltip: 'Remove',
+              onPressed: () => _removeApiKeyRow(index),
+            )
+          else
+            const SizedBox(width: 40),
+        ],
+      ),
+    );
+  }
+}
+
+// ── API Key field (show/hide + copy) ──────────────────────────────────────────
+
+class _ApiKeyField extends StatefulWidget {
+  final TextEditingController controller;
+  const _ApiKeyField({required this.controller});
+
+  @override
+  State<_ApiKeyField> createState() => _ApiKeyFieldState();
+}
+
+class _ApiKeyFieldState extends State<_ApiKeyField> {
+  bool _show   = false;
+  bool _copied = false;
+
+  Future<void> _copy() async {
+    final v = widget.controller.text.trim();
+    if (v.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: v));
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      obscureText: !_show,
+      style: const TextStyle(
+          color: AppTheme.textPrimary, fontFamily: 'monospace', fontSize: 13),
+      decoration: InputDecoration(
+        hintText: 'sk-… / AKIA… / Bearer …',
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(_show ? Icons.visibility_off : Icons.visibility,
+                  color: AppTheme.textSecondary, size: 18),
+              onPressed: () => setState(() => _show = !_show),
+            ),
+            TextButton(
+              onPressed: _copy,
+              style: TextButton.styleFrom(
+                foregroundColor:
+                    _copied ? AppTheme.success : AppTheme.textSecondary,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(_copied ? '✓' : 'Copy',
+                  style: const TextStyle(fontSize: 12)),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }

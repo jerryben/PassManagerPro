@@ -190,10 +190,15 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: const Icon(Icons.settings),
           tooltip: 'Settings',
           onPressed: () async {
-            await Navigator.of(context).push(
+            // Settings returns true if a sync/restore happened
+            final didSync = await Navigator.of(context).push<bool>(
               MaterialPageRoute(builder: (_) => const SettingsScreen()),
             );
+            // Always reload — if data was pulled in Settings, show it now
             await _load();
+            if (didSync == true) {
+              _setSyncMsg('✓ Credentials updated', true);
+            }
           },
         ),
       ],
@@ -380,13 +385,44 @@ class _HomeScreenState extends State<HomeScreen> {
 
           if (c.email != null && c.email!.isNotEmpty)
             _plainField('📧  Email / Username', c.email!),
-          _maskedField('🔑  Password', c.password),
-          if (c.apiKey != null && c.apiKey!.isNotEmpty)
-            _maskedField('🔐  API Key', c.apiKey!),
+          // Password — optional (SSO entries may not have one)
+          if (c.password != null && c.password!.isNotEmpty)
+            _maskedField('🔑  Password', c.password!)
+          else
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(children: [
+                const Text('🔑  Password  ',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceAlt,
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: AppTheme.border),
+                  ),
+                  child: const Text('SSO — no password stored',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                ),
+              ]),
+            ),
+
+          // Notes
+          if (c.notes != null && c.notes!.isNotEmpty)
+            _plainField('📝  Notes', c.notes!),
+
+          // Multiple API keys
+          for (var i = 0; i < c.apiKeys.length; i++)
+            _maskedField(
+              c.apiKeys.length == 1
+                  ? '🔐  API Key'
+                  : '🔐  API Key \${i + 1}',
+              c.apiKeys[i],
+            ),
 
           const SizedBox(height: 12),
           Text(
-            'Created ${_fmt(c.createdAt)}  •  Modified ${_fmt(c.modifiedAt)}',
+            'Created \${_fmt(c.createdAt)}  •  Modified \${_fmt(c.modifiedAt)}',
             style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
           ),
         ],

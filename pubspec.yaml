@@ -29,6 +29,12 @@ dependencies:
   uuid: ^4.5.1
   intl: ^0.20.2
 
+  # File picker (backup restore)
+  file_picker: ^8.1.2
+
+  # Window manager (Linux/Windows icon & title)
+  window_manager: ^0.4.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
