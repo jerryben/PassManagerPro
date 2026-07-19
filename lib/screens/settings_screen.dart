@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/gist_service.dart';
+import '../services/lock_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
@@ -306,6 +307,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _gistSection(),
                   const SizedBox(height: 20),
+                  _lockSection(),
+                  const SizedBox(height: 20),
                   _dataSection(),
                   const SizedBox(height: 20),
                   _statusBanner(),
@@ -462,6 +465,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
           label: const Text('Full Sync  (pull first → push)'),
           style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.surfaceAlt),
+        ),
+      ],
+    );
+  }
+
+  Widget _lockSection() {
+    return _card(
+      title: '🔒  Auto-Lock',
+      children: [
+        const Text(
+          'Automatically locks the vault after a period of inactivity.',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
+        ),
+        const SizedBox(height: 16),
+        _label('Lock after'),
+        const SizedBox(height: 8),
+        // Timeout option chips
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: LockService.timeoutOptions.map((opt) {
+            final selected = LockService().timeoutSeconds == opt.seconds;
+            return GestureDetector(
+              onTap: () async {
+                await LockService().setTimeoutSeconds(opt.seconds);
+                setState(() {});
+                _ok(opt.seconds == 0
+                    ? 'Auto-lock disabled'
+                    : 'Auto-lock set to \${opt.label} ✓');
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppTheme.primary.withOpacity(0.20)
+                      : AppTheme.surfaceAlt,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: selected ? AppTheme.primary : AppTheme.border,
+                    width: selected ? 1.5 : 1,
+                  ),
+                ),
+                child: Text(
+                  opt.label,
+                  style: TextStyle(
+                    color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 12),
+        // Current setting indicator
+        Row(
+          children: [
+            const Icon(Icons.info_outline, color: AppTheme.textSecondary, size: 14),
+            const SizedBox(width: 6),
+            Text(
+              LockService().isNeverLock
+                  ? 'Auto-lock is disabled — not recommended'
+                  : 'Vault locks after \${LockService().timeoutLabel} of inactivity',
+              style: TextStyle(
+                color: LockService().isNeverLock
+                    ? AppTheme.warning
+                    : AppTheme.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+          ],
         ),
       ],
     );

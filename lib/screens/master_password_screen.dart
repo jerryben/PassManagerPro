@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/encryption_service.dart';
+import '../services/lock_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
@@ -23,25 +24,24 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
   static const _kSalt     = 'master_salt';
   static const _kVerifier = 'master_verifier';
 
-  bool _isSetup  = false;
-  bool _loading  = true;
-  bool _busy     = false;
-  bool _showPw   = false;
-  bool _showConf = false;
+  bool    _isSetup = false;
+  bool    _loading = true;
+  bool    _busy    = false;
+  bool    _showPw  = false;
+  bool    _showCf  = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    // Stop the lock timer while on the lock screen
+    LockService().stopTimer();
     _detect();
   }
 
   Future<void> _detect() async {
     final salt = await _secure.read(key: _kSalt);
-    setState(() {
-      _isSetup = (salt == null);
-      _loading = false;
-    });
+    setState(() { _isSetup = (salt == null); _loading = false; });
   }
 
   String _makeSalt() {
@@ -57,18 +57,15 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
     setState(() { _error = null; _busy = true; });
 
     if (_isSetup) {
-      // ── First-run: create vault ──────────────────────────────────
-      if (pw.length < 8) { _err('Minimum 8 characters'); return; }
-      if (_confirmCtrl.text != pw) { _err('Passwords do not match'); return; }
+      if (pw.length < 8)            { _err('Minimum 8 characters'); return; }
+      if (_confirmCtrl.text != pw)  { _err('Passwords do not match'); return; }
 
-      final salt = _makeSalt();
+      final salt     = _makeSalt();
       _enc.initialize(pw, salt);
       final verifier = _enc.createVerifier();
-
       await _secure.write(key: _kSalt,     value: salt);
       await _secure.write(key: _kVerifier, value: verifier);
     } else {
-      // ── Subsequent runs: verify & unlock ─────────────────────────
       final salt     = await _secure.read(key: _kSalt);
       final verifier = await _secure.read(key: _kVerifier);
       _enc.initialize(pw, salt!);
@@ -79,17 +76,18 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
       }
     }
 
-    // ── CRITICAL: initialise cross-device sync key ─────────────────
-    // Must be called on EVERY unlock (setup and subsequent runs).
-    // Uses a fixed app-level salt so all devices with the same master
-    // password derive the SAME sync key → Gist blobs can be decrypted
-    // on any device.
+    // Cross-device sync key (fixed salt — same on all devices)
     _enc.initializeSyncKey(pw);
 
     await _storage.init();
+
+    // Start the inactivity timer now that vault is unlocked
+    LockService().startTimer();
+
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
+    Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
+      (route) => false,
     );
   }
 
@@ -111,17 +109,19 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primary.withOpacity(0.15),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: AppTheme.primary.withOpacity(0.4), width: 2),
+                // Icon
+                Center(
+                  child: Container(
+                    width: 80, height: 80,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(0.15),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: AppTheme.primary.withOpacity(0.4), width: 2),
+                    ),
+                    child: const Icon(Icons.lock,
+                        color: AppTheme.primary, size: 40),
                   ),
-                  child:
-                      const Icon(Icons.lock, color: AppTheme.primary, size: 40),
                 ),
                 const SizedBox(height: 28),
 
@@ -129,10 +129,9 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
                   _isSetup ? 'Create Your Vault' : 'Unlock Your Vault',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                  ),
+                      color: AppTheme.textPrimary,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -144,6 +143,7 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
                 ),
                 const SizedBox(height: 36),
 
+                // Password field
                 TextField(
                   controller: _pwCtrl,
                   obscureText: !_showPw,
@@ -153,8 +153,9 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
                     labelText: 'Master Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(
-                          _showPw ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(_showPw
+                          ? Icons.visibility_off
+                          : Icons.visibility),
                       onPressed: () => setState(() => _showPw = !_showPw),
                     ),
                   ),
@@ -164,18 +165,17 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
                   const SizedBox(height: 16),
                   TextField(
                     controller: _confirmCtrl,
-                    obscureText: !_showConf,
+                    obscureText: !_showCf,
                     onSubmitted: (_) => _submit(),
                     style: const TextStyle(color: AppTheme.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'Confirm Password',
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
-                        icon: Icon(_showConf
+                        icon: Icon(_showCf
                             ? Icons.visibility_off
                             : Icons.visibility),
-                        onPressed: () =>
-                            setState(() => _showConf = !_showConf),
+                        onPressed: () => setState(() => _showCf = !_showCf),
                       ),
                     ),
                   ),
@@ -183,17 +183,15 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
 
                 if (_error != null) ...[
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      const Icon(Icons.error_outline,
-                          color: AppTheme.error, size: 16),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(_error!,
-                            style: const TextStyle(color: AppTheme.error)),
-                      ),
-                    ],
-                  ),
+                  Row(children: [
+                    const Icon(Icons.error_outline,
+                        color: AppTheme.error, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(_error!,
+                          style: const TextStyle(color: AppTheme.error)),
+                    ),
+                  ]),
                 ],
 
                 const SizedBox(height: 28),
@@ -201,11 +199,9 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
                   onPressed: _busy ? null : _submit,
                   child: _busy
                       ? const SizedBox(
-                          height: 20,
-                          width: 20,
+                          height: 20, width: 20,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
+                              strokeWidth: 2, color: Colors.white))
                       : Text(_isSetup ? 'Create Vault' : 'Unlock'),
                 ),
 
@@ -218,8 +214,8 @@ class _MasterPasswordScreenState extends State<MasterPasswordScreen> {
                     SizedBox(width: 6),
                     Text(
                       'AES-256 encrypted · master password never stored',
-                      style:
-                          TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                      style: TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 12),
                     ),
                   ],
                 ),

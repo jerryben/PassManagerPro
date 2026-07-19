@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/credential.dart';
+import '../services/encryption_service.dart';
+import '../services/lock_service.dart';
 import '../services/storage_service.dart';
 import '../services/gist_service.dart';
 import '../theme/app_theme.dart';
 import 'credential_form_screen.dart';
+import 'master_password_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -126,7 +129,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final wide = MediaQuery.of(context).size.width > 720;
 
-    return Scaffold(
+    return InactivityDetector(
+      child: Scaffold(
       backgroundColor: AppTheme.background,
       appBar: _appBar(),
       body: _loading
@@ -143,6 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
         tooltip: 'New credential',
         child: const Icon(Icons.add),
       ),
+    ),   // InactivityDetector
     );
   }
 
@@ -185,6 +190,13 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: const Icon(Icons.sync),
           tooltip: 'Sync with Gist',
           onPressed: _syncing ? null : _fullSync,
+        ),
+        IconButton(
+          icon: const Icon(Icons.lock_outline),
+          tooltip: 'Lock vault',
+          onPressed: () {
+            LockService().lock();
+          },
         ),
         IconButton(
           icon: const Icon(Icons.settings),
